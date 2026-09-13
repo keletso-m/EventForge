@@ -3,6 +3,8 @@ package com.eventforge.eventforge_api.event;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 
 import java.util.List;
 import java.util.UUID;
@@ -12,15 +14,26 @@ import java.util.UUID;
 public class EventController {
 
     private final EventRepository eventRepository;
+    private final SqsClient sqsClient;
 
-    public EventController(EventRepository eventRepository) {
+    private static final String QUEUE_URL =
+            "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/events-queue";
+
+    public EventController(EventRepository eventRepository, SqsClient sqsClient) {
         this.eventRepository = eventRepository;
+        this.sqsClient = sqsClient;
     }
 
     @PostMapping
     public ResponseEntity<Event> createEvent(@RequestBody Event event) {
         event.setStatus(EventStatus.PENDING);
         Event saved = eventRepository.save(event);
+
+        sqsClient.sendMessage(SendMessageRequest.builder()
+                .queueUrl(QUEUE_URL)
+                .messageBody(saved.getId().toString())
+                .build());
+
         return ResponseEntity.status(HttpStatus.CREATED).body(saved);
     }
 
