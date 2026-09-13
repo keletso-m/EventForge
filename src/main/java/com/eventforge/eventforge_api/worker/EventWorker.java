@@ -60,6 +60,11 @@ public class EventWorker {
 
                 System.out.println("Processing event: " + event.getId() + " (" + event.getType() + ")");
 
+                // for now( temporary): deliberately fail events of this type, to test retry behavior
+                if ("test.failure".equals(event.getType())) {
+                    throw new RuntimeException("Simulated processing failure");
+                }
+
                 event.setStatus(EventStatus.COMPLETED);
                 eventRepository.save(event);
 
@@ -67,6 +72,7 @@ public class EventWorker {
 
             } catch (Exception e) {
                 System.out.println("Failed to process event " + eventId + ": " + e.getMessage());
+                // message intentionally not deleted, SQS will redeliver after visibility timeout
             }
         });
     }
