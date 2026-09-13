@@ -45,25 +45,36 @@ public class EventWorker {
         UUID eventId = UUID.fromString(message.body());
 
         eventRepository.findById(eventId).ifPresent(event -> {
+
+            // idempotency guard: if this event has already reached a terminal
+            // state, skip processing entirely because this message is a duplicate
+            if (event.getStatus() == EventStatus.COMPLETED || event.getStatus() == EventStatus.FAILED) {
+                System.out.println("Skipping already-processed event: " + eventId + " (status: " + event.getStatus() + ")");
+                deleteFromQueue(message); //  remove it, since it's a duplicate, not a failure
+                return;
+            }
+
             try {
                 event.setStatus(EventStatus.PROCESSING);
                 eventRepository.save(event);
 
-                // Simulated work
                 System.out.println("Processing event: " + event.getId() + " (" + event.getType() + ")");
 
                 event.setStatus(EventStatus.COMPLETED);
                 eventRepository.save(event);
 
-                sqsClient.deleteMessage(DeleteMessageRequest.builder()
-                        .queueUrl(QUEUE_URL)
-                        .receiptHandle(message.receiptHandle())
-                        .build());
+                deleteFromQueue(message);
 
             } catch (Exception e) {
                 System.out.println("Failed to process event " + eventId + ": " + e.getMessage());
-                // Message is NOT deleted here, it'll reappear in the queue after visibility timeout,
             }
         });
+    }
+
+    private void deleteFromQueue(Message message) {
+        sqsClient.deleteMessage(DeleteMessageRequest.builder()
+                .queueUrl(QUEUE_URL)
+                .receiptHandle(message.receiptHandle())
+                .build());
     }
 }
