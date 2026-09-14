@@ -74,7 +74,7 @@ public class EventWorker {
             } catch (Exception e) {
                 int attempts = event.getAttemptCount() + 1;
                 event.setAttemptCount(attempts);
-                System.out.println("Failed to process event " + eventId + ": " + e.getMessage());
+                System.out.println("Failed to process event " + eventId + " (attempt " + attempts + "/" + MAX_ATTEMPTS + "): " + e.getMessage());
                 // message intentionally not deleted, SQS will redeliver after visibility timeout
             }
         });
