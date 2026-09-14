@@ -15,6 +15,8 @@ public class Event {
     @Id
     @GeneratedValue
     private UUID id;
+    @Column(nullable = false)
+    private int attemptCount = 0;
 
     @Column(nullable = false)
     private String type;
