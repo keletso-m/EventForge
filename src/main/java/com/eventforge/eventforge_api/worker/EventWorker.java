@@ -19,6 +19,7 @@ public class EventWorker {
             "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/events-queue";
 
     private final SqsClient sqsClient;
+    private static final int MAX_ATTEMPTS = 3;
     private final EventRepository eventRepository;
 
     public EventWorker(SqsClient sqsClient, EventRepository eventRepository) {
@@ -71,6 +72,8 @@ public class EventWorker {
                 deleteFromQueue(message);
 
             } catch (Exception e) {
+                int attempts = event.getAttemptCount() + 1;
+                event.setAttemptCount(attempts);
                 System.out.println("Failed to process event " + eventId + ": " + e.getMessage());
                 // message intentionally not deleted, SQS will redeliver after visibility timeout
             }
