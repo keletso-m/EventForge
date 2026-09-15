@@ -75,11 +75,16 @@ public class EventWorker {
                 int attempts = event.getAttemptCount() + 1;
                 event.setAttemptCount(attempts);
                 System.out.println("Failed to process event " + eventId + " (attempt " + attempts + "/" + MAX_ATTEMPTS + "): " + e.getMessage());
+                if (attempts >= MAX_ATTEMPTS) {
+                    event.setStatus(EventStatus.FAILED);
+                    eventRepository.save(event);
+                    deleteFromQueue(message); // stop retrying, remove from queue, it's terminally failed
+                    System.out.println("Event " + eventId + " exceeded max attempts, marked FAILED");
+                }
                 // message intentionally not deleted, SQS will redeliver after visibility timeout
             }
         });
     }
-
     private void deleteFromQueue(Message message) {
         sqsClient.deleteMessage(DeleteMessageRequest.builder()
                 .queueUrl(QUEUE_URL)
