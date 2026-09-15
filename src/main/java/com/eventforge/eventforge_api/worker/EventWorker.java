@@ -80,6 +80,9 @@ public class EventWorker {
                     eventRepository.save(event);
                     deleteFromQueue(message); // stop retrying, remove from queue, it's terminally failed
                     System.out.println("Event " + eventId + " exceeded max attempts, marked FAILED");
+                } else {
+                    event.setStatus(EventStatus.RETRYING);
+                    eventRepository.save(event);
                 }
                 // message intentionally not deleted, SQS will redeliver after visibility timeout
             }
