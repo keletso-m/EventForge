@@ -1,4 +1,5 @@
 package com.eventforge.eventforge_api.worker;
+
 import com.eventforge.eventforge_api.event.Event;
 import com.eventforge.eventforge_api.event.EventRepository;
 import com.eventforge.eventforge_api.event.EventStatus;
@@ -17,9 +18,10 @@ public class EventWorker {
 
     private static final String QUEUE_URL =
             "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/events-queue";
+    private static final String DLQ_URL =
+            "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/events-dlq";
 
     private final SqsClient sqsClient;
-    private static final int MAX_ATTEMPTS = 3;
     private final EventRepository eventRepository;
 
     public EventWorker(SqsClient sqsClient, EventRepository eventRepository) {
@@ -27,6 +29,9 @@ public class EventWorker {
         this.eventRepository = eventRepository;
     }
 
+    // Polls the main queue, normal processing + retries.
+    // SQS itself decides when a message has failed too many times and
+    // moves it to the DLQ
     @Scheduled(fixedDelay = 5000)
     public void pollQueue() {
         List<Message> messages = sqsClient.receiveMessage(
@@ -42,16 +47,43 @@ public class EventWorker {
         }
     }
 
+    // Polls the dead-letter queue, events that SQS gave up retrying.
+    // only failied event
+    @Scheduled(fixedDelay = 5000)
+    public void pollDeadLetterQueue() {
+        List<Message> messages = sqsClient.receiveMessage(
+                ReceiveMessageRequest.builder()
+                        .queueUrl(DLQ_URL)
+                        .maxNumberOfMessages(5)
+                        .waitTimeSeconds(2)
+                        .build()
+        ).messages();
+
+        for (Message message : messages) {
+            UUID eventId = UUID.fromString(message.body());
+
+            eventRepository.findById(eventId).ifPresent(event -> {
+                event.setStatus(EventStatus.FAILED);
+                eventRepository.save(event);
+                System.out.println("Event " + eventId + " landed in DLQ, marked FAILED");
+            });
+
+            sqsClient.deleteMessage(DeleteMessageRequest.builder()
+                    .queueUrl(DLQ_URL)
+                    .receiptHandle(message.receiptHandle())
+                    .build());
+        }
+    }
+
     private void processMessage(Message message) {
         UUID eventId = UUID.fromString(message.body());
 
         eventRepository.findById(eventId).ifPresent(event -> {
 
-            // idempotency guard: if this event has already reached a terminal
-            // state, skip processing entirely because this message is a duplicate
+            // idempotency guard
             if (event.getStatus() == EventStatus.COMPLETED || event.getStatus() == EventStatus.FAILED) {
                 System.out.println("Skipping already-processed event: " + eventId + " (status: " + event.getStatus() + ")");
-                deleteFromQueue(message); //  remove it, since it's a duplicate, not a failure
+                deleteFromQueue(message);
                 return;
             }
 
@@ -59,9 +91,8 @@ public class EventWorker {
                 event.setStatus(EventStatus.PROCESSING);
                 eventRepository.save(event);
 
-                System.out.println("Processing event: " + event.getId() + " (" + event.getType() + ")");
+                System.out.println("Processing event: " + event.getId() + " (" + event.getType() + ") - attempt " + (event.getAttemptCount() + 1));
 
-                // for now( temporary): deliberately fail events of this type, to test retry behavior
                 if ("test.failure".equals(event.getType())) {
                     throw new RuntimeException("Simulated processing failure");
                 }
@@ -74,20 +105,16 @@ public class EventWorker {
             } catch (Exception e) {
                 int attempts = event.getAttemptCount() + 1;
                 event.setAttemptCount(attempts);
-                System.out.println("Failed to process event " + eventId + " (attempt " + attempts + "/" + MAX_ATTEMPTS + "): " + e.getMessage());
-                if (attempts >= MAX_ATTEMPTS) {
-                    event.setStatus(EventStatus.FAILED);
-                    eventRepository.save(event);
-                    deleteFromQueue(message); // stop retrying, remove from queue, it's terminally failed
-                    System.out.println("Event " + eventId + " exceeded max attempts, marked FAILED");
-                } else {
-                    event.setStatus(EventStatus.RETRYING);
-                    eventRepository.save(event);
-                }
-                // message intentionally not deleted, SQS will redeliver after visibility timeout
+                event.setStatus(EventStatus.RETRYING);
+                eventRepository.save(event);
+
+                System.out.println("Failed to process event " + eventId + " (attempt " + attempts + "): " + e.getMessage());
+                // Message intentionally NOT deleted. SQS's redrive policy owns
+
             }
         });
     }
+
     private void deleteFromQueue(Message message) {
         sqsClient.deleteMessage(DeleteMessageRequest.builder()
                 .queueUrl(QUEUE_URL)
