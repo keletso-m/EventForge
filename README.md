@@ -223,6 +223,5 @@ The primary goal of EventForge is to demonstrate practical understanding of **di
 
 Rather than focusing on deployment itself, the project focuses on how software can reliably process work across multiple independent components.
 
-> **DeploymentCtrl:** How do I deploy software?
 
 > **EventForge:** How do distributed systems reliably process work?
